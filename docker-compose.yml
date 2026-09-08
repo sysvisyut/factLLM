@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: factmesh-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: factmesh
+      POSTGRES_USER: factmesh
+      POSTGRES_PASSWORD: factmeshpassword
+    ports:
+      - "5433:5432" # mapped to 5433 on host to avoid port clash with host postgres-18 service
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U factmesh -d factmesh"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: factmesh-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: factmesh-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg://factmesh:factmeshpassword@postgres:5432/factmesh
+      REDIS_URL: redis://redis:6379/0
+      USE_REDIS_QUEUE: "true"
+      STORAGE_DIR: /app/data/storage
+      LLM_PROVIDER: offline_heuristic
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      CORS_ORIGINS: http://localhost:5173,http://localhost:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - factmesh_storage:/app/data/storage
+      - ./data/starter-datasets:/app/data/starter-datasets:ro
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: factmesh-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  factmesh_storage:
